@@ -1,15 +1,36 @@
 {
-  "name": "ada-pr-website",
+  "name": "ada-pr-cli",
   "version": "0.0.1",
-  "description": "A webapp for tracking student PR status",
+  "description": "A CLI tool for tracking student PR status",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "",
+  "engines": {
+    "node": ">=8.x"
+  },
+  "author": "Ace Nassri <anassri@google.com>",
   "license": "Apache-2.0",
+  "bin": {
+    "prcheck": "./index.js"
+  },
   "dependencies": {
+    "array-uniq": "^2.1.0",
     "axios": "^0.18.0",
-    "chalk": "^2.4.2"
+    "chalk": "^2.4.2",
+    "chrono-node": "^1.3.11",
+    "moment": "^2.24.0",
+    "nconf": "^0.10.0",
+    "yargs": "^13.2.2"
+  },
+  "devDependencies": {
+    "ava": "^1.4.1",
+    "eslint": "^5.16.0",
+    "eslint-config-prettier": "^4.2.0",
+    "eslint-plugin-node": "^8.0.1",
+    "eslint-plugin-prettier": "^3.0.1",
+    "prettier": "^1.17.0",
+    "proxyquire": "^2.1.0",
+    "sinon": "^7.3.2"
   }
 }
