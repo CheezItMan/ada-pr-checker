@@ -46,10 +46,17 @@ const getProgram = (
     configValues
   );
 
+  const configstoreMock = {
+    get: sinon.stub().callsFake(x => configMock[x]),
+    set: sinon.stub().callsFake((x, y) => {
+      configMock[x] = y;
+    }),
+  };
+
   const mocks = {
     fs: fsMock,
     axios: axiosMock,
-    '../config.json': configMock,
+    configstore: sinon.stub().returns(configstoreMock),
     config: configMock,
   };
 
@@ -95,7 +102,7 @@ test('should prompt for token if rate-limited', async t => {
 
   await t.throwsAsync(async () => {
     await program.getRepo('Ada-C1', 'repo', new Date());
-  }, "You're rate-limited. Specify an auth token in config.json?");
+  }, /rate-limited/);
 });
 
 /* Input validation */

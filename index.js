@@ -2,15 +2,43 @@
 
 `use strict`;
 
-const github = require('./lib/github');
-const {sortedLog} = require('./lib/sortedLog');
-const config = require('./config.json');
+const console = require('console'); // Enable proxyquire stubbing
+
+const Configstore = require('configstore');
+const config = new Configstore('ada-pr-checker');
 
 const chalk = require('chalk');
 const moment = require('moment');
 const arrDedupe = require('array-uniq');
 const {parseDate} = require('chrono-node');
 const pLimit = require('p-limit');
+
+const github = require('./lib/github');
+const {sortedLog} = require('./lib/sortedLog');
+
+const _validateConfigKey = key => {
+  const SUPPORTED_KEYS = [
+    'githubAuthors',
+    'githubOrg',
+    'githubAuthToken',
+    'cacheExpiry',
+    'allGithubRepos',
+  ];
+
+  if (!SUPPORTED_KEYS.includes(key)) {
+    console.error('Unknown key name! Supported values are:');
+    for (const supportedKey of SUPPORTED_KEYS) {
+      console.error(`- ${supportedKey}`);
+    }
+
+    return false;
+  } else {
+    return true;
+  }
+};
+
+const _configKeyIsArray = key =>
+  ['allGithubRepos', 'githubAuthors'].includes(key);
 
 const MAX_CONCURRENT_REPO_CHECKS = 5; // To avoid GitHub rate limits
 
@@ -103,7 +131,32 @@ const _checkPRsForRepo = async (org, repo, users, maxCacheAge) => {
 };
 
 const cli = require('yargs')
-  .demand(1)
+  .demandCommand(1)
+  .command('setConfig <key> <values...>', 'Sets a config value.', {}, opts => {
+    if (!_validateConfigKey(opts.key)) {
+      return;
+    }
+
+    if (!_configKeyIsArray(opts.key)) {
+      opts.values = opts.values[0];
+    }
+
+    config.set(opts.key, opts.values);
+  })
+  .command('getConfig <key>', 'Gets a config value.', {}, opts => {
+    console.log(config.get(opts.key));
+  })
+  .command('deleteConfig <key>', 'Deletes a config value.', {}, opts => {
+    if (!_validateConfigKey(opts.key)) {
+      return;
+    }
+
+    config.set(opts.key, undefined);
+  })
+
+  .command('listConfig', 'List all config values', {}, () => {
+    console.log(config.all);
+  })
   .command(
     'check <repos...>',
     'Checks for PR status',
@@ -111,8 +164,7 @@ const cli = require('yargs')
       authors: {
         type: 'array',
         alias: 'a',
-        default: config.githubAuthors || '@',
-        global: true,
+        default: config.get('githubAuthors') || '@',
       },
       org: {
         type: 'string',
@@ -123,31 +175,29 @@ const cli = require('yargs')
             moment().diff(moment('2013-06-01'), 'months') / 6
           );
           const autoOrgName = `Ada-C${cohort}`;
+          const cfgOrg = config.get('githubOrg');
 
-          if (config.githubOrg && config.githubOrg !== autoOrgName) {
+          if (cfgOrg && cfgOrg.startsWith('Ada-C') && cfgOrg !== autoOrgName) {
             console.log(
               chalk.red.bold('WARN GitHub org name may be outdated!')
             );
-            console.log(
-              chalk.red.bold(`\t${config.githubOrg} --> ${autoOrgName}`)
-            );
+            console.log(chalk.red.bold(`\t${cfgOrg} --> ${autoOrgName}`));
           }
 
-          return config.githubOrg || autoOrgName;
+          return cfgOrg || autoOrgName;
         },
       },
       maxCacheAge: {
         type: 'string',
         alias: 'c',
-        default: config.cacheExpiry || '60 minutes',
-        global: true,
+        default: config.get('cacheExpiry') || '60 minutes',
         coerce: age => _negateDate(age),
       },
     },
     async opts => {
       let repos = opts.repos;
       if (_arrayIsWildcard(repos)) {
-        repos = config['allGithubRepos'];
+        repos = config.get('allGithubRepos');
       }
 
       const limit = pLimit(MAX_CONCURRENT_REPO_CHECKS);
@@ -160,7 +210,19 @@ const cli = require('yargs')
       return Promise.all(promises);
     }
   )
-  .wrap(120)
+  .wrap(80)
+  .example(
+    'prcheck setConfig githubAuthToken MY_AUTH_TOKEN',
+    'Set your GitHub auth token'
+  )
+  .example(
+    'prcheck setConfig githubAuthors ace-n',
+    'Set a GitHub author to check by default'
+  )
+  .example(
+    'prcheck setConfig githubAuthors ace-n shrutivanw',
+    'Set multiple GitHub authors to check by default'
+  )
   .example(
     'prcheck check repo_1 repo_2',
     'Search for PRs from repo_1 and repo_2. Filter authors based on config.json (default: no filter)'
@@ -184,5 +246,5 @@ const cli = require('yargs')
 exports.cli = cli; // for testing
 
 if (module === require.main) {
-  cli.argv; // eslint-disable-line
+  cli.parse(process.argv.slice(2)); // eslint-disable-line
 }

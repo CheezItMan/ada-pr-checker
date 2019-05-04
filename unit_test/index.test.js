@@ -1,6 +1,8 @@
 `use strict`;
 
-const proxyquire = require('proxyquire');
+const proxyquire = require('proxyquire')
+  .noPreserveCache()
+  .noCallThru();
 const test = require('ava');
 const sinon = require('sinon');
 const chalk = require('chalk');
@@ -34,6 +36,16 @@ const getProgram = (configValues, momentTime, parseDateTime) => {
   parseDateTime = parseDateTime || new Date();
   momentTime = momentTime || new Date();
 
+  // Clone values (to prevent cross-test issues)
+  configValues = JSON.parse(JSON.stringify(configValues));
+
+  const configstoreMock = {
+    get: sinon.stub().callsFake(x => configValues[x]),
+    set: sinon.stub().callsFake((x, y) => {
+      configValues[x] = y;
+    }),
+  };
+
   const githubLibMock = {
     getRepo: sinon.stub().resolves(repoData),
     getReviews: sinon.stub().resolves(reviewsData),
@@ -49,33 +61,35 @@ const getProgram = (configValues, momentTime, parseDateTime) => {
   // moment()'s are mutable, so return a new one each time
   proxyMoment.withArgs().callsFake(() => realMoment(momentTime));
 
+  const consoleMock = {
+    log: sinon.stub(),
+    error: console.error,
+  };
+
   const mocks = {
     './lib/github': githubLibMock,
     libGithub: githubLibMock,
-    './config.json': configValues,
+    configstore: sinon.stub().returns(configstoreMock),
+    configstoreMock: configstoreMock,
     config: configValues,
     'chrono-node': chronoMock,
     chrono: chronoMock,
     moment: proxyMoment,
+    console: consoleMock,
   };
 
+  // Make a new instance of index.js with each cli.parse call
+  // yargs doesn't handle multiple cli.parse calls per instance well
+  const makeCli = () => proxyquire('../index.js', mocks).cli;
+
   return {
-    program: proxyquire('../index.js', mocks),
+    makeCli,
     mocks,
   };
 };
 
-/* Stub + restore console.log */
-const realConsoleLog = console.log;
-test.before(() => {
-  console.log = sinon.stub(console, 'log');
-});
-test.after.always(() => {
-  console.log = realConsoleLog;
-});
-
-/* Config.json options */
-test('should import settings from config.json', async t => {
+/* Config options */
+test('should import settings from config', async t => {
   const config = {
     githubAuthors: ['target_user'],
     githubOrg: 'Ada-C11',
@@ -92,11 +106,12 @@ test('should import settings from config.json', async t => {
   cacheDate.setMinutes(mainDate.getMinutes() - 5);
   cacheDate = cacheDate.valueOf();
 
-  const {program, mocks} = getProgram(config, mainDate, negatedDate);
+  const {makeCli, mocks} = getProgram(config, mainDate, negatedDate);
 
-  await program.cli.parse('check @');
+  await makeCli().parse('check @');
 
   const ghMock = mocks.libGithub;
+
   t.true(ghMock.getRepo.calledWith('Ada-C11', 'repo_1'), cacheDate);
   t.true(ghMock.getRepo.calledWith('Ada-C11', 'repo_2'), cacheDate);
 
@@ -108,18 +123,48 @@ test('should import settings from config.json', async t => {
   t.false(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 2));
 });
 
+test('should set, get, and delete config options', async t => {
+  const {makeCli, mocks} = getProgram();
+
+  await makeCli().parse(['setConfig', 'githubOrg', 'barbaz']);
+
+  await makeCli().parse(['getConfig', 'githubOrg']);
+  t.true(mocks.console.log.calledWith('barbaz'));
+
+  await makeCli().parse(['deleteConfig', 'githubOrg']);
+
+  await makeCli().parse(['getConfig', 'githubOrg']);
+  t.true(mocks.console.log.calledWith(undefined));
+});
+
+test('should error on invalid config keys', async t => {
+  const {makeCli, mocks} = getProgram();
+
+  await makeCli().parse(['setConfig', 'badKey', 'barBaz']);
+  t.true(mocks.configstoreMock.set.notCalled);
+});
+
+test('should set and get array config options', async t => {
+  const {makeCli, mocks} = getProgram();
+
+  await makeCli().parse(['setConfig', 'allGithubRepos', 'repo_1', 'repo_2']);
+  await makeCli().parse(['getConfig', 'allGithubRepos']);
+
+  t.true(mocks.console.log.calledWith(['repo_1', 'repo_2']));
+});
+
 /* CLI options */
 test('should warn if config.json org name is outdated', async t => {
   const config = {
     githubOrg: 'Ada-C1', // outdated,
   };
 
-  const {program} = getProgram(config, null, null);
+  const {makeCli, mocks} = getProgram(config, null, null);
 
-  await program.cli.parse('check @');
+  await makeCli().parse('check @');
 
   t.true(
-    console.log.calledWith(
+    mocks.console.log.calledWith(
       chalk.red.bold('WARN GitHub org name may be outdated!')
     )
   );
@@ -143,9 +188,9 @@ test('should respect cache expiry flag over config.json', async t => {
   wrongDate.setMinutes(mainDate.getMinutes() - 5);
   wrongDate = wrongDate.valueOf();
 
-  const {program, mocks} = getProgram(config, mainDate, negatedDate);
+  const {makeCli, mocks} = getProgram(config, mainDate, negatedDate);
 
-  await program.cli.parse('check @ -c "10 minutes"');
+  await makeCli().parse('check @ -c "10 minutes"');
 
   const ghMock = mocks.libGithub;
   t.true(ghMock.getRepo.calledWith('Ada-C11', sinon.match.string, cacheDate));
@@ -182,10 +227,10 @@ test('should respect authors flag over config.json', async t => {
   cacheDate.setMinutes(mainDate.getMinutes() - 5);
   cacheDate = cacheDate.valueOf();
 
-  const {program, mocks} = getProgram(config, mainDate, negatedDate);
+  const {makeCli, mocks} = getProgram(config, mainDate, negatedDate);
   const ghMock = mocks.libGithub;
 
-  await program.cli.parse('check @ --authors @');
+  await makeCli().parse('check @ --authors @');
 
   t.true(
     ghMock.getReviews.calledWith('Ada-C11', sinon.match.any, 1, cacheDate)
@@ -209,10 +254,10 @@ test('should respect repos arg over config.json', async t => {
   cacheDate.setMinutes(mainDate.getMinutes() - 5);
   cacheDate = cacheDate.valueOf();
 
-  const {program, mocks} = getProgram(config, mainDate, negatedDate);
+  const {makeCli, mocks} = getProgram(config, mainDate, negatedDate);
   const ghMock = mocks.libGithub;
 
-  await program.cli.parse('check repo_1');
+  await makeCli().parse('check repo_1');
 
   t.true(
     ghMock.getReviews.calledWith(
@@ -238,10 +283,10 @@ test('should respect repos arg over config.json', async t => {
  * but are here for added clarity + coverage
  */
 test('should check all repos for all students', async t => {
-  const {program, mocks} = getProgram();
+  const {makeCli, mocks} = getProgram();
   const ghMock = mocks.libGithub;
 
-  await program.cli.parse('check @ --authors @');
+  await makeCli().parse('check @ --authors @');
 
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 1));
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 2));
@@ -250,10 +295,10 @@ test('should check all repos for all students', async t => {
 });
 
 test('should check all repos for specific students', async t => {
-  const {program, mocks} = getProgram();
+  const {makeCli, mocks} = getProgram();
   const ghMock = mocks.libGithub;
 
-  await program.cli.parse('check @ --authors target_user');
+  await makeCli().parse('check @ --authors target_user');
 
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 1));
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_2', 1));
@@ -261,10 +306,10 @@ test('should check all repos for specific students', async t => {
 });
 
 test('should check specific repos for all students', async t => {
-  const {program, mocks} = getProgram();
+  const {makeCli, mocks} = getProgram();
   const ghMock = mocks.libGithub;
 
-  await program.cli.parse('check repo_1 --authors @');
+  await makeCli().parse('check repo_1 --authors @');
 
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 1));
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 2));
@@ -274,10 +319,10 @@ test('should check specific repos for all students', async t => {
 });
 
 test('should check specific repos for specific students', async t => {
-  const {program, mocks} = getProgram();
+  const {makeCli, mocks} = getProgram();
   const ghMock = mocks.libGithub;
 
-  await program.cli.parse('check repo_1 --authors target_user');
+  await makeCli().parse('check repo_1 --authors target_user');
 
   t.true(ghMock.getReviews.calledWith('Ada-C11', 'repo_1', 1));
   t.false(ghMock.getReviews.calledWith('Ada-C11', sinon.match.string, 2));
