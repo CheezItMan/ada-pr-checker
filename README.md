@@ -6,6 +6,15 @@ This tool checks student pull request status using the GitHub REST API.
 npm i -g https://github.com/ace-n/ada-pr-checker
 ```
 
+**Optional:** increase your GitHub rate limits
+1) Open the [GitHub personal access token creation page](https://github.com/settings/tokens/new) in your browser
+1) Check **only** the `repo_status` and `public_repo` checkboxes. **Make sure any others are unchecked!**
+1) Click `Generate token` and copy the resulting value
+1) Configure `prcheck` to use the token. Replace `<YOUR_GITHUB_TOKEN>` in the command below with the value you obtained in the previous step:
+```
+prcheck setConfig githubAuthToken <YOUR_GITHUB_TOKEN>
+```
+
 ## Configuration
 This application uses [`configstore`](https://npmjs.com/package/configstore) for configuration.
 
@@ -18,6 +27,7 @@ Use the following commands to work with config values:
 
 ### Settings
 The following are permitted config values:
+- `githubAuthToken` - the Auth token to use when making GitHub requests. (**Optional**, but increases rate limits.)
 - `githubAuthors` - only review PRs authored by these usernames (wildcard: `@`)
 - `githubOrg` - the GitHub organization (or username) that PRs are sent to (defaults to `Ada-C###`, where `###` is the current cohort number)
 - `cacheExpiry` - how long to cache GitHub requests for before updating them
