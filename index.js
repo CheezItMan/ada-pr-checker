@@ -10,6 +10,9 @@ const chalk = require('chalk');
 const moment = require('moment');
 const arrDedupe = require('array-uniq');
 const {parseDate} = require('chrono-node');
+const pLimit = require('p-limit');
+
+const MAX_CONCURRENT_REPO_CHECKS = 5; // To avoid GitHub rate limits
 
 const _arrayIsWildcard = x => x.length === 1 && x[0] === '@';
 const _prefix = (user, repo) => `${chalk.magenta(user)} -> ${chalk.cyan(repo)}`;
@@ -147,8 +150,11 @@ const cli = require('yargs')
         repos = config['allGithubRepos'];
       }
 
+      const limit = pLimit(MAX_CONCURRENT_REPO_CHECKS);
       const promises = repos.map(repo =>
-        _checkPRsForRepo(opts.org, repo, opts.authors, opts.maxCacheAge)
+        limit(() =>
+          _checkPRsForRepo(opts.org, repo, opts.authors, opts.maxCacheAge)
+        )
       );
 
       return Promise.all(promises);
