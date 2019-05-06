@@ -197,7 +197,7 @@ const cli = require('yargs')
     async opts => {
       let repos = opts.repos;
       if (_arrayIsWildcard(repos)) {
-        repos = config.get('allGithubRepos');
+        repos = config.get('allGithubRepos') || [];
       }
 
       const limit = pLimit(MAX_CONCURRENT_REPO_CHECKS);
